@@ -1,0 +1,151 @@
+DDL Part
+
+CREATE TABLE users (
+      "id" serial PRIMARY KEY, 
+      "username" VARCHAR(25) UNIQUE NOT NULL 
+      CONSTRAINT minimumUsernameLength CHECK (LENGTH("username") > 0)
+);
+
+CREATE TABLE topics (
+      "id" serial PRIMARY KEY, 
+      "topic_name" VARCHAR(30) UNIQUE NOT NULL 
+      CONSTRAINT minimumTopicName CHECK (LENGTH("topic_name") > 0),
+      "topic_description" VARCHAR(500)
+);
+
+CREATE TABLE posts (
+      "id" serial PRIMARY KEY, 
+      "post_title" VARCHAR(100) NOT NULL 
+      CONSTRAINT minimumPostTitle CHECK (LENGTH("post_title") > 0),
+      "post_url" TEXT,
+      "post_text" TEXT,
+      CONSTRAINT urlOrText CHECK ("post_url" IS NULL OR "post_text" IS NULL),
+      "topic_id" INT,
+      "user_id" INT,
+      CONSTRAINT fk_user_id
+          FOREIGN KEY("user_id") 
+              REFERENCES users("id")
+              ON DELETE SET NULL,
+      CONSTRAINT fk_topic_id
+          FOREIGN KEY("topic_id") 
+              REFERENCES topics("id")
+              ON DELETE CASCADE
+);
+
+CREATE TABLE comments (
+      "id" serial PRIMARY KEY, 
+      "comment_text" TEXT NOT NULL,
+       CONSTRAINT minimumTextLength CHECK (LENGTH("comment_text") > 0),
+      "arbitrage_comment_id" INT,
+      "post_id" INT,
+      "user_id" INT,
+      CONSTRAINT fk_arbitrage_comment
+          FOREIGN KEY("id") 
+              REFERENCES comments("id")
+              ON DELETE CASCADE,
+      CONSTRAINT fk_user_id
+          FOREIGN KEY("user_id") 
+              REFERENCES users("id")
+              ON DELETE SET NULL,
+      CONSTRAINT fk_post_id
+          FOREIGN KEY("post_id") 
+              REFERENCES posts("id")
+              ON DELETE CASCADE
+);
+
+
+CREATE TABLE votes (
+     "id" serial PRIMARY KEY,
+     "user_id" INT,
+     "post_id" INT,
+     "vote" INT,
+     CONSTRAINT oneOrMinusOne CHECK ("vote" = 1 OR "vote" = 0 OR "vote" = -1),
+     UNIQUE ("user_id", "post_id"),
+     CONSTRAINT fk_user_id
+          FOREIGN KEY("user_id") 
+              REFERENCES users("id")
+              ON DELETE SET NULL,
+     CONSTRAINT fk_post_id
+          FOREIGN KEY("post_id") 
+              REFERENCES posts("id")
+              ON DELETE CASCADE
+);
+
+ALTER TABLE users ADD COLUMN "last_login" DATE;
+
+ALTER TABLE posts ADD COLUMN "created" DATE;
+
+ALTER TABLE comments ADD COLUMN "created" DATE;
+
+CREATE INDEX index_post_url 
+ON posts(post_url);
+
+CREATE INDEX index_post_score 
+ON votes(post_id);
+
+
+DML Part
+
+INSERT INTO users("username")
+SELECT DISTINCT username FROM bad_posts;
+
+INSERT INTO users("username")
+SELECT DISTINCT username
+  FROM(
+  SELECT unnest(string_to_array(upvotes, ',')) as username
+  FROM bad_posts bp
+) as t
+WHERE t.username NOT IN (SELECT username FROM users);
+
+INSERT INTO users("username")
+SELECT DISTINCT username
+  FROM(
+  SELECT unnest(string_to_array(downvotes, ',')) as username
+  FROM bad_posts bp
+) as t
+WHERE t.username NOT IN (SELECT username FROM users);
+
+INSERT INTO topics("topic_name", "topic_description")
+SELECT DISTINCT topic, NULL FROM bad_posts;
+
+INSERT INTO posts("post_title", "post_url", "post_text", "topic_id", "user_id")
+(SELECT LEFT(title, 100), url, text_content, t.id, u.id
+FROM bad_posts b, users u, topics t
+WHERE u.username = b.username AND b.topic = t.topic_name);
+
+SELECT COUNT(DISTINCT(title)) = COUNT(title)
+FROM bad_posts;
+
+INSERT INTO votes("user_id", "post_id", "vote")
+(
+    SELECT u1.id, post_id, 1
+      FROM (
+          SELECT u.id AS user_id, p.id AS post_id, unnest(string_to_array(upvotes, ',')) as username
+            FROM bad_posts b, users u, posts p
+           WHERE b.title = p.post_title AND u.username=b.username) AS t1,
+           users u1
+     WHERE t1.username = u1.username
+);
+
+INSERT INTO votes("user_id", "post_id", "vote")
+(
+    SELECT u1.id, post_id, -1
+      FROM (
+          SELECT u.id AS user_id, p.id AS post_id, unnest(string_to_array(downvotes, ',')) as username
+            FROM bad_posts b, users u, posts p
+           WHERE b.title = p.post_title AND u.username=b.username) AS t1,
+           users u1
+     WHERE t1.username = u1.username
+);
+
+INSERT INTO users("username")
+SELECT DISTINCT(bc.username)
+  FROM bad_comments bc
+ WHERE bc.username NOT IN (SELECT username FROM users);
+
+INSERT INTO comments("comment_text", "arbitrage_comment_id", "post_id", "user_id")
+(
+   SELECT bc.text_content, NULL, p.id, u.id
+     FROM bad_comments bc, bad_posts bp, posts p, users u
+    WHERE bc.post_id = bp.id AND u.username = bc.username AND bp.title = p.post_title
+);
